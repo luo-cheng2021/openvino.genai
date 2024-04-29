@@ -42,7 +42,7 @@ GenerationResult from_sequence_group(std::shared_ptr<Tokenizer> tokenizer, Seque
 } // namespace
 
 void apply_paged_attention_transformations(std::shared_ptr<ov::Model> model,
-                                           const ModelConfig& model_config, const DeviceConfig& device_config);
+                                           const ModelConfig& model_config, const DeviceConfig& device_config, const SchedulerConfig& scheduler_config);
 
 class ContinuousBatchingPipeline::Impl {
     std::shared_ptr<Tokenizer> m_tokenizer;
@@ -89,7 +89,7 @@ public:
         const std::string device = "CPU";
         DeviceConfig device_config(core, scheduler_config, model_config, device);
 
-        apply_paged_attention_transformations(model, model_config, device_config);
+        apply_paged_attention_transformations(model, model_config, device_config, scheduler_config);
         ov::InferRequest infer_request = core.compile_model(model, device_config.get_device(), ov::enable_profiling(true)).create_infer_request();
 
         // setup KV caches

@@ -235,11 +235,7 @@ private:
         m_request.set_tensor("context_lens", context_lens);
         m_request.set_tensor("block_tables", block_tables);
 
-        try {
-            m_request.set_tensor("subsequence_lens", subsequence_lens);
-        } catch (ov::Exception& ex) {
-            // ignore, because plugin's kernel does not support this new parameter
-        }
+        m_request.set_tensor("subsequence_lens", subsequence_lens);
 
         // print_tensor("input_ids", input_ids);
         // print_tensor("position_ids", position_ids);
