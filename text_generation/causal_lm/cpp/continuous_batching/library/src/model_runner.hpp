@@ -147,6 +147,7 @@ private:
         // since we merge sequence_len and batch to avoid ragged dimensions => batch dimension contains all tokens, while seq len is 1
         const size_t seq_len = 1;
         const size_t num_scheduled_sequences = scheduler_output.m_scheduled_sequence_groups_ids.size();
+        size_t num_subsequence_lens = 0;
 
         // compute aggregated values
         for (size_t i = 0; i < num_scheduled_sequences; ++i) {
@@ -155,6 +156,7 @@ private:
             batch_size += sequence_group->get_num_scheduled_tokens() * sequence_group->num_running_seqs();
             max_num_blocks = std::max(max_num_blocks, sequence_group->get_num_blocks());
             max_context_len_value = std::max(max_context_len_value, sequence_group->get_context_len());
+            num_subsequence_lens += sequence_group->num_running_seqs();
         }
 
         ov::Tensor
@@ -165,7 +167,7 @@ private:
             slot_mapping(ov::element::i64, {batch_size, seq_len}),
             context_lens(ov::element::i64, {batch_size}),
             block_tables(ov::element::i32, {batch_size, max_num_blocks}),
-            subsequence_lens(ov::element::i64, {num_scheduled_sequences});
+            subsequence_lens(ov::element::i64, {num_subsequence_lens});
 
         max_context_len.data<int64_t>()[0] = max_context_len_value;
         // we don't differentiate prefill and generate phases
@@ -188,10 +190,10 @@ private:
             size_t num_scheduled_tokens = sequence_group->get_num_scheduled_tokens();
             size_t group_position_id = sequence_group->get_num_processed_tokens(), group_context_len = group_position_id + 1;
 
-            // report to plugin a length of current continuous sub-sequence
-            subsequence_lens_data[i] = num_scheduled_tokens;
-
             for (size_t seq_id = 0; seq_id < running_sequences.size(); ++seq_id) {
+                // report to plugin a length of current continuous sub-sequence
+                *subsequence_lens_data++ = num_scheduled_tokens;
+
                 Sequence::CPtr sequence = running_sequences[seq_id];
                 size_t position_id = group_position_id, context_len = group_context_len;
 
@@ -235,8 +237,12 @@ private:
         m_request.set_tensor("context_lens", context_lens);
         m_request.set_tensor("block_tables", block_tables);
 
-        m_request.set_tensor("subsequence_lens", subsequence_lens);
-
+        try {
+            m_request.set_tensor("subsequence_lens", subsequence_lens);
+        } catch (ov::Exception& ex) {
+            // ignore, because plugin's kernel does not support this new parameter
+        }
+    
         // print_tensor("input_ids", input_ids);
         // print_tensor("position_ids", position_ids);
 
