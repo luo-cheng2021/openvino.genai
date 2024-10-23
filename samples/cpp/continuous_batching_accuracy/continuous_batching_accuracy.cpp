@@ -5,6 +5,7 @@
 #include <cxxopts.hpp>
 
 #include "openvino/genai/continuous_batching_pipeline.hpp"
+#include <chrono>
 
 void print_generation_result(const ov::genai::GenerationResult& generation_result) {
     for (size_t output_id = 0; output_id < generation_result.m_generation_ids.size(); ++output_id) {
@@ -61,9 +62,9 @@ int main(int argc, char* argv[]) try {
     };
 
     std::vector<ov::genai::GenerationConfig> sampling_params_examples {
-        ov::genai::beam_search(),
+        //ov::genai::beam_search(),
         ov::genai::greedy(),
-        ov::genai::multinomial(),
+        //ov::genai::multinomial(),
     };
 
     std::vector<std::string> prompts(num_prompts);
@@ -73,6 +74,7 @@ int main(int argc, char* argv[]) try {
         prompts[request_id] = use_prefix ? prefix_str + prompt_examples[request_id % prompt_examples.size()]
                                          : prompt_examples[request_id % prompt_examples.size()];
         sampling_params[request_id] = sampling_params_examples[request_id % sampling_params_examples.size()];
+        sampling_params[request_id].ignore_eos = true;
     }
 
     // Perform the inference
@@ -108,34 +110,48 @@ int main(int argc, char* argv[]) try {
         OPENVINO_ASSERT(generation_result.m_status == ov::genai::GenerationStatus::FINISHED);
     }
 
-    std::vector<ov::genai::GenerationResult> generation_results = pipe.generate(prompts, sampling_params);
+    std::cout << "output len,first run cost(seconds), second run cost(seconds)\n";
+    for (size_t i = 256; i <= 512; i += 64) {
+        sampling_params[0].min_new_tokens = i;
+        sampling_params[0].max_new_tokens = i;
+        auto beg = std::chrono::high_resolution_clock::now();
+        std::vector<ov::genai::GenerationResult> generation_results = pipe.generate(prompts, sampling_params);
+        auto end = std::chrono::high_resolution_clock::now();
+        auto cost0 = std::chrono::duration_cast<std::chrono::milliseconds>(end - beg).count();
 
-    for (size_t request_id = 0; request_id < generation_results.size(); ++request_id) {
-        const ov::genai::GenerationResult & generation_result = generation_results[request_id];
-        std::cout << "Question: " << prompts[request_id] << std::endl;
-        switch (generation_result.m_status)
-        {
-        case ov::genai::GenerationStatus::FINISHED:
-            print_generation_result(generation_result);
-            break;
-        case ov::genai::GenerationStatus::IGNORED:
-            std::cout << "Request was ignored due to lack of memory." <<std::endl;
-            if (generation_result.m_generation_ids.size() > 0) {
-                std::cout << "Partial result:" << std::endl;
+        beg = std::chrono::high_resolution_clock::now();
+        pipe.generate(prompts, sampling_params);
+        end = std::chrono::high_resolution_clock::now();
+        auto cost1 = std::chrono::duration_cast<std::chrono::milliseconds>(end - beg).count();
+        std::cout << i << ", " << cost0 << ", " << cost1 << "\n";
+
+        for (size_t request_id = 0; request_id < generation_results.size(); ++request_id) {
+            const ov::genai::GenerationResult & generation_result = generation_results[request_id];
+            //std::cout << "Question: " << prompts[request_id] << std::endl;
+            switch (generation_result.m_status)
+            {
+            case ov::genai::GenerationStatus::FINISHED:
                 print_generation_result(generation_result);
+                break;
+            case ov::genai::GenerationStatus::IGNORED:
+                std::cout << "Request was ignored due to lack of memory." <<std::endl;
+                if (generation_result.m_generation_ids.size() > 0) {
+                    std::cout << "Partial result:" << std::endl;
+                    print_generation_result(generation_result);
+                }
+                break;
+            case ov::genai::GenerationStatus::DROPPED_BY_PIPELINE:
+                std::cout << "Request was aborted." <<std::endl;
+                if (generation_result.m_generation_ids.size() > 0) {
+                    std::cout << "Partial result:" << std::endl;
+                    print_generation_result(generation_result);
+                }
+                break;   
+            default:
+                break;
             }
-            break;
-        case ov::genai::GenerationStatus::DROPPED_BY_PIPELINE:
-            std::cout << "Request was aborted." <<std::endl;
-            if (generation_result.m_generation_ids.size() > 0) {
-                std::cout << "Partial result:" << std::endl;
-                print_generation_result(generation_result);
-            }
-            break;   
-        default:
-            break;
+            std::cout << std::endl;
         }
-        std::cout << std::endl;
     }
 } catch (const std::exception& error) {
     try {
