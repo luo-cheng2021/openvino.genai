@@ -9,7 +9,7 @@ import llm_bench_utils.model_utils
 from openvino import get_version
 import torch
 import traceback
-from llm_bench_utils.memory_monitor import MemMonitorWrapper
+from llm_bench_utils.memory_profile import MemConsumption
 import llm_bench_utils.output_csv
 import llm_bench_utils.output_json
 import task.visual_language_generation as bench_vlm
@@ -20,7 +20,7 @@ import task.speech_to_text_generation as bench_speech
 import task.text_embeddings as bench_text_embed
 
 DEFAULT_TORCH_THREAD_NUMS = 16
-memory_monitor = MemMonitorWrapper()
+mem_consumption = MemConsumption()
 
 
 def num_iters_type(x):
@@ -88,19 +88,11 @@ def get_argprser():
     )
     parser.add_argument(
         "--memory_consumption_delay",
-        default=None,
+        default=0.5,
         required=False,
         type=float,
         help="delay for memory consumption check in seconds, smaller value will lead to more precised memory consumption, but may affects performance."
-        "It is not recommended to run memory consumption and performance benchmarking in the same time",
-    )
-    parser.add_argument(
-        '-mc_dir',
-        '--memory_consumption_dir',
-        default=None,
-        required=False,
-        type=str,
-        help='Path to store memory consamption logs and chart.',
+        "It is not recommended to run memory consumption and performance benchmarking in the same time"
     )
     parser.add_argument('-bs', '--batch_size', type=int, default=1, required=False, help='Batch size value')
     parser.add_argument('--num_beams', type=int, default=1, help='Number of beams in the decoding strategy, activates beam_search if greater than 1')
@@ -254,25 +246,22 @@ def main():
                     if half_nums_of_torch_threads > DEFAULT_TORCH_THREAD_NUMS:
                         torch.set_num_threads(DEFAULT_TORCH_THREAD_NUMS)
                     else:
-                        half_nums_of_torch_threads = int(half_nums_of_torch_threads) if int(half_nums_of_torch_threads) else 1
                         torch.set_num_threads(int(half_nums_of_torch_threads))
             log.info(f"The num_beams is {model_args['num_beams']}, update Torch thread num from "
                      f'{original_torch_thread_nums} to {torch.get_num_threads()}, avoid to use the CPU cores for OpenVINO inference.')
     log.info(out_str)
     if args.memory_consumption:
-        if args.memory_consumption_delay:
-            memory_monitor.interval = args.memory_consumption_delay
-        memory_monitor.create_monitors()
-        if args.memory_consumption_dir:
-            memory_monitor.set_dir(args.memory_consumption_dir)
+        mem_consumption.delay = args.memory_consumption_delay
+        mem_consumption.start_collect_mem_consumption_thread()
     try:
         if model_args['use_case'] in ['text_gen', 'code_gen']:
             iter_data_list, pretrain_time, iter_timestamp = CASE_TO_BENCH[model_args['use_case']](
                 model_path, framework, args.device, args.tokens_len, args.streaming, model_args,
-                args.num_iters, memory_monitor)
+                args.num_iters, mem_consumption)
         else:
             iter_data_list, pretrain_time, iter_timestamp = CASE_TO_BENCH[model_args['use_case']](
-                model_path, framework, args.device, model_args, args.num_iters, memory_monitor)
+                model_path, framework, args.device, model_args, args.num_iters,
+                mem_consumption)
         if args.report is not None or args.report_json is not None:
             model_precision = ''
             if framework == 'ov':
@@ -313,7 +302,7 @@ def main():
         exit(1)
     finally:
         if args.memory_consumption:
-            memory_monitor.stop()
+            mem_consumption.end_collect_mem_consumption_thread()
 
 
 if __name__ == '__main__':
